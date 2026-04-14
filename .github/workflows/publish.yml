@@ -1,0 +1,49 @@
+name: CI / Publish Leezerd
+
+on:
+  push:
+    branches:
+      - main          # runs CI on every push to main
+    tags:
+      - 'v*'          # runs publish on version tags like v1.0.1
+
+jobs:
+  # ── Runs on every push to main ──────────────────────────────────────────────
+  ci:
+    name: Build & compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+  # ── Runs only when you push a version tag (e.g. v1.0.1) ────────────────────
+  publish:
+    name: Publish to VS Code Marketplace
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile TypeScript
+        run: npm run compile
+
+      - name: Publish
+        run: npx @vscode/vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
