@@ -31,11 +31,14 @@ function startDaemon(soundPath: string): Promise<void> {
             return;
         }
 
+        // Escape single quotes for PowerShell single-quoted strings
+        const safePath = soundPath.replace(/'/g, "''");
+
         // Load media once; signal READY when it's buffered and seekable
         const initCmd =
             `Add-Type -AssemblyName presentationCore; ` +
             `$p = New-Object system.windows.media.mediaplayer; ` +
-            `$p.open('${soundPath}'); ` +
+            `$p.open('${safePath}'); ` +
             `$p.Volume = 1; ` +
             `Start-Sleep -Milliseconds 600; ` +
             `Write-Host 'READY'\r\n`;
