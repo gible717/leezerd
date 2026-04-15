@@ -3,10 +3,12 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 
 const START_SECONDS = 0.05;
+const PLATFORM = process.platform;
 
-let daemon: ChildProcess | null = null;
-let daemonReady = false;
+let daemon: ChildProcess | null = null;   // Windows only
+let daemonReady = false;                   // Windows only
 let lastPlayed = 0;
+let soundPath = '';
 
 function getConfig() {
     const cfg = vscode.workspace.getConfiguration('leezerd');
@@ -16,9 +18,10 @@ function getConfig() {
     };
 }
 
-// Spawn a persistent PowerShell process that keeps the audio loaded.
-// Sending one line to its stdin triggers an instant seek+play — no startup cost.
-function startDaemon(soundPath: string): Promise<void> {
+// ── Windows: persistent PowerShell daemon ──────────────────────────────────
+// Loads audio once at startup; each play is a single stdin line — no process
+// overhead. Uses MediaOpened event instead of a fixed sleep for fast readiness.
+function startWindowsDaemon(filePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
         const ps = spawn('powershell', [
             '-NoProfile', '-NonInteractive', '-Command', '-'
@@ -32,15 +35,19 @@ function startDaemon(soundPath: string): Promise<void> {
         }
 
         // Escape single quotes for PowerShell single-quoted strings
-        const safePath = soundPath.replace(/'/g, "''");
+        const safePath = filePath.replace(/'/g, "''");
 
-        // Load media once; signal READY when it's buffered and seekable
+        // Wait for MediaOpened event instead of a fixed sleep — signals readiness
+        // as soon as the file is buffered (typically <200ms for small local files)
         const initCmd =
             `Add-Type -AssemblyName presentationCore; ` +
             `$p = New-Object system.windows.media.mediaplayer; ` +
+            `Register-ObjectEvent -InputObject $p -EventName MediaOpened -SourceIdentifier 'MO' | Out-Null; ` +
             `$p.open('${safePath}'); ` +
             `$p.Volume = 1; ` +
-            `Start-Sleep -Milliseconds 600; ` +
+            `Wait-Event -SourceIdentifier 'MO' -Timeout 3 | Out-Null; ` +
+            `Remove-Event 'MO' -ErrorAction SilentlyContinue; ` +
+            `Unregister-Event 'MO' -ErrorAction SilentlyContinue; ` +
             `Write-Host 'READY'\r\n`;
 
         ps.stdin.write(initCmd);
@@ -57,26 +64,77 @@ function startDaemon(soundPath: string): Promise<void> {
     });
 }
 
-// Each call is a single stdin line — near-instant, no new process overhead
-function triggerPlay(): void {
+function windowsPlay(): void {
     if (!daemonReady || !daemon?.stdin) { return; }
-    const cmd =
+    daemon.stdin.write(
         `$p.Stop(); ` +
         `$p.Position = [System.TimeSpan]::FromSeconds(${START_SECONDS}); ` +
-        `$p.Play()\r\n`;
-    daemon.stdin.write(cmd);
+        `$p.Play()\r\n`
+    );
+}
+
+// ── macOS: afplay (built-in, always available) ─────────────────────────────
+function macPlay(): void {
+    spawn('afplay', [soundPath], {
+        stdio: 'ignore',
+        detached: true
+    }).unref();
+}
+
+// ── Linux: mpg123 ──────────────────────────────────────────────────────────
+function linuxPlay(): void {
+    spawn('mpg123', ['-q', soundPath], {
+        stdio: 'ignore',
+        detached: true
+    }).unref();
+}
+
+function checkMpg123(): Promise<boolean> {
+    return new Promise(resolve => {
+        const p = spawn('which', ['mpg123'], { stdio: 'ignore' });
+        p.on('close', code => resolve(code === 0));
+        p.on('error', () => resolve(false));
+    });
+}
+
+// ── Unified trigger ────────────────────────────────────────────────────────
+function triggerPlay(): void {
+    if (PLATFORM === 'win32')        { windowsPlay(); }
+    else if (PLATFORM === 'darwin')  { macPlay(); }
+    else                             { linuxPlay(); }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-    const soundPath = path.join(context.extensionPath, 'sounds', 'lizard.mp3');
+    soundPath = path.join(context.extensionPath, 'sounds', 'lizard.mp3');
 
-    startDaemon(soundPath)
-        .then(() => {
-            vscode.window.showInformationMessage('Leezerd is ready! Type "l" and unleash the lizard.');
-        })
-        .catch((err: Error) => {
-            vscode.window.showErrorMessage(`Leezerd failed to start: ${err.message}`);
+    // Platform-specific startup
+    if (PLATFORM === 'win32') {
+        startWindowsDaemon(soundPath)
+            .then(() => {
+                vscode.window.showInformationMessage('Leezerd is ready! Type "l" and unleash the lizard.');
+            })
+            .catch((err: Error) => {
+                vscode.window.showErrorMessage(`Leezerd failed to start: ${err.message}`);
+            });
+
+    } else if (PLATFORM === 'darwin') {
+        // afplay is always available on macOS — ready immediately
+        vscode.window.showInformationMessage('Leezerd is ready! Type "l" and unleash the lizard.');
+
+    } else if (PLATFORM === 'linux') {
+        checkMpg123().then(ok => {
+            if (ok) {
+                vscode.window.showInformationMessage('Leezerd is ready! Type "l" and unleash the lizard.');
+            } else {
+                vscode.window.showErrorMessage(
+                    'Leezerd: mpg123 not found. Install it with: sudo apt install mpg123'
+                );
+            }
         });
+
+    } else {
+        vscode.window.showErrorMessage('Leezerd: unsupported platform.');
+    }
 
     const listener = vscode.workspace.onDidChangeTextDocument(event => {
         const { enabled, cooldownMs } = getConfig();

@@ -20,6 +20,12 @@ Leezerd plays the iconic lizard sound effect every time you type the letter `l` 
 
 Search **Leezerd** in the VS Code Extensions tab and install. That's it. The lizard is now part of your workflow.
 
+| Platform | Requirement |
+|----------|-------------|
+| Windows | Nothing — works out of the box |
+| macOS | Nothing — works out of the box |
+| Linux | `mpg123` — install with `sudo apt install mpg123` |
+
 ---
 
 ## Settings

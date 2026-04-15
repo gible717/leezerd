@@ -2,7 +2,7 @@
   "name": "leezerd",
   "displayName": "Leezerd",
   "description": "Plays the lizard sound when you type 'l', 'L', or the word 'lizard'",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "publisher": "inkfangs",
   "icon": "images/icon.png",
   "repository": {
